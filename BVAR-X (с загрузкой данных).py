@@ -787,7 +787,7 @@ def compute_max_p(T, n, m=0, max_ratio=0.25):
 def load_data_from_excel(file_path, sheet_name):
     """Загрузка реальных данных из Excel-файла."""
     try:
-        df = pd.read_excel(file_path, sheet_name=sheet_name)
+        df = pd.read_excel(file_path, sheet_name=sheet_name).dropna()
 
         # Проверка наличия необходимых столбцов
         required_columns = ['Month', 'Uninvestedfunds', 'NettoFunds',
@@ -813,7 +813,7 @@ def load_data_from_excel(file_path, sheet_name):
 
 
 def user_interface():
-    """Консольный интерфейс с поддержкой экзогенных переменных."""
+    """Консольный интерфейс для работы с реальными данными из Excel."""
     # Инициализация переменных
     prior_type = None
     prior_kwargs = {}
@@ -821,471 +821,451 @@ def user_interface():
     conf = None
     prior_choice = None
     p = 1  # Значение по умолчанию для порядка лага модели
-    steps = 20  # Значение по умолчанию для длины прогноза
+    steps = 0  # Длина прогноза будет определена автоматически
 
-    # Выбор источника данных
-    print("\nВыберите источник данных:")
-    print("1. Загрузить данные из Excel-файла")
-    print("2. Сгенерировать синтетические данные")
-    data_choice = input("Введите номер (1-2): ").strip()
+    # Автоматическая загрузка данных из Excel
+    file_path = "C:/Users/lihop/Личные данные/Работа/Робофинанс/Темы исследований/2025/P2P-платформа/Прогноз RBC на май/Портфель.xlsx"
+    sheet_name = "Eviews"
 
-    if data_choice == '1':
-        # Загрузка данных из Excel
-        file_path = "C:/Users/lihop/Личные данные/Работа/Робофинанс/Темы исследований/2025/P2P-платформа/Прогноз RBC на май/Портфель.xlsx"
-        sheet_name = "Eviews"
-        Y, exog = load_data_from_excel(file_path, sheet_name)
+    print("\nЗагрузка данных из Excel...")
+    Y, exog = load_data_from_excel(file_path, sheet_name)
 
-        if Y is None:
-            print("\nНе удалось загрузить данные. Используются сгенерированные данные.")
-            # Генерация данных (как в оригинальном коде)
-            np.random.seed(42)
-            T = 100
-            n = 2
-            Y = np.zeros((T, n))
-            for t in range(1, T):
-                Y[t, 0] = 0.7 * Y[t - 1, 0] + np.random.normal(0, 0.5)
-                Y[t, 1] = -0.4 * Y[t - 1, 1] + 0.3 * Y[t - 1, 0] + np.random.normal(0, 0.3)
-            use_exog = False
-            exog = None
+    if Y is None:
+        raise ValueError("Не удалось загрузить данные из Excel. Проверьте файл и структуру данных.")
+
+    print("\nДанные успешно загружены:")
+    print(f"Эндогенные переменные: Uninvestedfunds, NettoFunds, Reinvestedfunds, Totalclients")
+    print(f"Количество наблюдений: {len(Y)}")
+
+    use_exog = exog is not None
+    if use_exog:
+        print(f"\nЭкзогенные переменные: Investedfunds, Plannedrate")
+        print(f"Количество наблюдений экзогенных переменных: {len(exog)}")
+
+        # Определение доступного диапазона будущих значений
+        steps = len(Y) - len(exog)
+        if steps <= 0:
+            print("\nВнимание: Длина экзогенных переменных больше или равна эндогенным.")
+            print("Необходимо задать будущие значения экзогенных переменных.")
+
+            # Запрос способа задания будущих значений
+            print("\nВыберите способ задания будущих значений экзогенных переменных:")
+            print("1. Использовать последние доступные значения (продолжить текущий тренд)")
+            print("2. Ввести вручную будущие значения")
+            print("3. Прогнозировать с помощью ARIMA (автоматически для всех переменных)")
+            future_choice = input("Введите номер (1-3): ").strip()
+
+            steps = int(input("\nВведите количество будущих периодов для прогноза: ") or "12")
+
+            if future_choice == '1':
+                # Используем последние доступные значения
+                exog_future = np.tile(exog[-1, :], (steps, 1))
+                print(f"\nИспользуются последние доступные значения для {steps} будущих периодов.")
+            elif future_choice == '2':
+                # Ручной ввод будущих значений
+                exog_future = np.zeros((steps, exog.shape[1]))
+                print(f"\nВведите {steps} будущих значений для каждой из {exog.shape[1]} переменных:")
+                for j in range(exog.shape[1]):
+                    print(f"\nПеременная {j + 1}:")
+                    for i in range(steps):
+                        val = float(input(f"Период {i + 1}: "))
+                        exog_future[i, j] = val
+            elif future_choice == '3':
+                # Прогнозирование с помощью ARIMA
+                try:
+                    from statsmodels.tsa.arima.model import ARIMA
+                    print("\nПрогнозирование будущих значений экзогенных переменных с помощью ARIMA...")
+                    exog_future = np.zeros((steps, exog.shape[1]))
+                    for j in range(exog.shape[1]):
+                        best_order = (1, 1, 1)  # Можно добавить автоматический подбор порядка
+                        model = ARIMA(exog[:, j], order=best_order)
+                        model_fit = model.fit()
+                        forecast = model_fit.forecast(steps=steps)
+                        exog_future[:, j] = forecast
+                        print(f"Переменная {j + 1}: ARIMA{best_order} прогноз на {steps} периодов")
+                except ImportError:
+                    print("Ошибка: Для использования ARIMA необходимо установить statsmodels.")
+                    print("Используются последние доступные значения.")
+                    exog_future = np.tile(exog[-1, :], (steps, 1))
+            else:
+                print("Неверный выбор. Используются последние доступные значения.")
+                exog_future = np.tile(exog[-1, :], (steps, 1))
         else:
-            use_exog = True
-            print("\nДанные успешно загружены:")
-            print(f"Эндогенные переменные: Uninvestedfunds, NettoFunds, Reinvestedfunds, Totalclients")
-            print(f"Экзогенные переменные: Investedfunds, Plannedrate")
-            print(f"Количество наблюдений: {len(Y)}")
+            print(f"\nДоступно {steps} будущих значений экзогенных переменных.")
+            exog_future = exog[-steps:] if steps > 0 else None
     else:
-        # Генерация данных
-        np.random.seed(42)
-        T = 100
-        n = 2
-        Y = np.zeros((T, n))
-        for t in range(1, T):
-            Y[t, 0] = 0.7 * Y[t - 1, 0] + np.random.normal(0, 0.5)
-            Y[t, 1] = -0.4 * Y[t - 1, 1] + 0.3 * Y[t - 1, 0] + np.random.normal(0, 0.3)
-
-        # Запрос на использование экзогенных переменных
-        use_exog = input("\nИспользовать экзогенные переменные? (y/n): ").strip().lower() == 'y'
-        exog = None
         exog_future = None
+        print("\nЭкзогенные переменные не обнаружены. Будут использованы только эндогенные переменные.")
+        steps = 12  # Значение по умолчанию, если нет экзогенных переменных
 
-        if use_exog:
-            m = int(input("Введите количество экзогенных переменных: "))
-            if m == 0:
-                print("Введено 0 экзогенных переменных — экзогенные переменные отключены.")
-                use_exog = False
-            else:
-                print("\nВыберите способ задания исторических значений экзогенных переменных:")
-                print("1. Сгенерировать случайные данные")
-                print("2. Ввести вручную исторические значения")
-                exog_choice = input("Введите номер (1-2): ").strip()
+    # Выбор порядка лага
+    print("\nВыберите порядок лага p для BVAR:")
+    print("1. Ввести вручную")
+    print("2. Оптимизировать по BIC")
+    print("3. Оптимизировать по AIC")
+    lag_choice = input("Введите номер (1-3): ").strip()
 
-                if exog_choice == '1':
-                    exog = np.random.normal(0, 1, (T, m))
-                    print(f"\nСгенерировано {m} экзогенных переменных со стандартным нормальным распределением")
-                elif exog_choice == '2':
-                    print("\nВведите данные для каждой экзогенной переменной (по строкам):")
-                    exog = np.zeros((T, m))
-                    for t in range(T):
-                        row = input(f"Шаг {t + 1} (введите {m} значений через пробел): ").split()
-                        exog[t] = [float(x) for x in row[:m]]
+    selected_prior_for_lag = None
+    auto_apply_prior = False
 
-                steps = int(input("\nВведите длину будущих значений экзогенных переменных: ") or "20")
-                print("\nВыберите способ задания будущих значений экзогенных переменных:")
-                print("1. Сгенерировать случайные данные")
-                print("2. Ввести вручную будущие значения")
-                print("3. Прогнозировать с помощью ARIMA (автоматически для всех переменных)")
-                future_choice = input("Введите номер (1-3): ").strip()
+    if lag_choice == '1':
+        p = int(input("Введите число лагов (например, 1-5): ").strip())
+    else:
+        print("\nВыберите априор для оценки при оптимизации лагов:")
+        print("1. Litterman-Minnesota prior")
+        print("2. Normal-Flat prior")
+        print("3. Normal-Wishart prior")
+        print("4. Sims-Zha Normal-Flat prior")
+        print("5. Sims-Zha Normal-Wishart prior")
+        print("6. Optimal prior (рекомендуется)")
+        prior_for_lag = input("Введите номер (1-6): ").strip()
 
-                if future_choice == '1':
-                    exog_future = np.random.normal(0, 1, (steps, m))
-                    print(f"Сгенерировано {steps} будущих значений для каждой экзогенной переменной")
-                elif future_choice == '2':
-                    exog_future = np.zeros((steps, m))
-                    print(f"Введите {steps} будущих значений для каждой из {m} переменных:")
-                    for j in range(m):
-                        print(f"\nПеременная {j + 1}:")
-                        for i in range(steps):
-                            val = float(input(f"Шаг {i + 1}: "))
-                            exog_future[i, j] = val
-                elif future_choice == '3':
-                    try:
-                        from statsmodels.tsa.arima.model import ARIMA
-                        print("\nПрогнозирование будущих значений экзогенных переменных с помощью ARIMA...")
-                        exog_future = np.zeros((steps, m))
-                        for j in range(m):
-                            best_order = (1, 1, 1)
-                            model = ARIMA(exog[:, j], order=best_order)
-                            model_fit = model.fit()
-                            forecast = model_fit.forecast(steps=steps)
-                            exog_future[:, j] = forecast
-                            print(f"Переменная {j + 1}: ARIMA{best_order} прогноз на {steps} шагов")
-                    except ImportError:
-                        print("Ошибка: Для использования ARIMA необходимо установить statsmodels.")
-                        print("Используется генерация случайных данных вместо ARIMA.")
-                        exog_future = np.random.normal(0, 1, (steps, m))
+        prior_type_map = {
+            '1': 'minnesota',
+            '2': 'normal_flat',
+            '3': 'normal_wishart',
+            '4': 'sims_zha_normal_flat',
+            '5': 'sims_zha_normal_wishart',
+            '6': 'modal'
+        }
 
-        # Выбор порядка лага (перенесено за пределы блока use_exog)
-        print("\nВыберите порядок лага p для BVAR:")
-        print("1. Ввести вручную")
-        print("2. Оптимизировать по BIC")
-        print("3. Оптимизировать по AIC")
-        lag_choice = input("Введите номер (1-3): ").strip()
+        selected_prior_for_lag = prior_type_map.get(prior_for_lag)
 
-        selected_prior_for_lag = None
-        auto_apply_prior = False
+        if selected_prior_for_lag != 'modal':
+            apply = input(f"\nИспользовать '{selected_prior_for_lag}' как основной априор? (y/n): ").strip().lower()
+            auto_apply_prior = (apply == 'y')
 
-        if lag_choice == '1':
-            p = int(input("Введите число лагов (например, 1-5): ").strip())
-        else:
-            print("\nВыберите априор для оценки при оптимизации лагов:")
-            print("1. Litterman-Minnesota prior")
-            print("2. Normal-Flat prior")
-            print("3. Normal-Wishart prior")
-            print("4. Sims-Zha Normal-Flat prior")
-            print("5. Sims-Zha Normal-Wishart prior")
-            print("6. Optimal prior (рекомендуется)")
-            prior_for_lag = input("Введите номер (1-6): ").strip()
+        m = exog.shape[1] if use_exog and exog is not None else 0
+        max_p = compute_max_p(len(Y), Y.shape[1], m)
+        min_p = 1
 
-            prior_type_map = {
-                '1': 'minnesota',
-                '2': 'normal_flat',
-                '3': 'normal_wishart',
-                '4': 'sims_zha_normal_flat',
-                '5': 'sims_zha_normal_wishart',
-                '6': 'modal'
-            }
-
-            selected_prior_for_lag = prior_type_map.get(prior_for_lag)
-
-            if selected_prior_for_lag != 'modal':
-                apply = input(f"\nИспользовать '{selected_prior_for_lag}' как основной априор? (y/n): ").strip().lower()
-                auto_apply_prior = (apply == 'y')
-
-            m = exog.shape[1] if use_exog and exog is not None else 0
-            max_p = compute_max_p(T, n, m)
-            min_p = 1
-
-            if selected_prior_for_lag == 'modal':
-                priors_for_modal = ['minnesota', 'normal_flat', 'normal_wishart',
-                                  'sims_zha_normal_flat', 'sims_zha_normal_wishart']
-                p_results = []
-                for pt in priors_for_modal:
-                    kwargs = default_kwargs(pt, n)
-                    best_p = None
-                    best_score = float('inf')
-                    for candidate_p in range(min_p, max_p + 1):
-                        score = calculate_bic_aic(Y, candidate_p, pt, kwargs,
-                                                exog=exog,
-                                                criterion='bic' if lag_choice == '2' else 'aic')
-                        if score < best_score:
-                            best_score, best_p = score, candidate_p
-                    p_results.append(best_p)
-                    print(f"{pt}: лучший p = {best_p}")
-
-                counts = Counter(p_results)
-                modal_p = max(counts, key=counts.get)
-                ties = [k for k, v in counts.items() if v == counts[modal_p]]
-                modal_p = min(ties)
-                print(f"\nМодальное число лагов среди всех априоров: p = {modal_p}")
-                p = modal_p
-            else:
-                kwargs = default_kwargs(selected_prior_for_lag, n)
-                best_p = min_p
+        if selected_prior_for_lag == 'modal':
+            priors_for_modal = ['minnesota', 'normal_flat', 'normal_wishart',
+                                'sims_zha_normal_flat', 'sims_zha_normal_wishart']
+            p_results = []
+            for pt in priors_for_modal:
+                kwargs = default_kwargs(pt, Y.shape[1])
+                best_p = None
                 best_score = float('inf')
                 for candidate_p in range(min_p, max_p + 1):
-                    score = calculate_bic_aic(Y, candidate_p, selected_prior_for_lag, kwargs,
-                                            exog=exog,
-                                            criterion='bic' if lag_choice == '2' else 'aic')
-                    print(f"p={candidate_p}, score={score:.3f}")
+                    score = calculate_bic_aic(Y, candidate_p, pt, kwargs,
+                                              exog=exog,
+                                              criterion='bic' if lag_choice == '2' else 'aic')
                     if score < best_score:
-                        best_score = score
-                        best_p = candidate_p
-                print(f"Оптимальное число лагов: {best_p}")
-                p = best_p
+                        best_score, best_p = score, candidate_p
+                p_results.append(best_p)
+                print(f"{pt}: лучший p = {best_p}")
 
-        print(f"\nВыбран порядок лагов p = {p}")
-
-        # Выбор априора (перенесено за пределы блока use_exog)
-        if not auto_apply_prior:
-            print("\nВыберите тип априорного распределения для дальнейшей оценки и прогноза:")
-            print("1. Litterman-Minnesota prior (стандартная рекурсивная BVAR)")
-            print("2. Normal-Flat prior (слабая информация)")
-            print("3. Normal-Wishart prior (усиление ковариации)")
-            print("4. Sims-Zha Normal-Flat prior (структурная BVAR со слабой информацией)")
-            print("5. Sims-Zha Normal-Wishart prior (структурная BVAR с усилением ковариации)")
-            print("6. Автоматический подбор распределения с оптимизацией гиперпараметров")
-            print("7. Медианная оценка по всем доступным распределениям")
-            prior_choice = input("Введите номер (1-7): ").strip()
-            steps = int(input("\nВведите длину прогноза: ") or "20")
-
-        if prior_choice == '7':
-            # Медианная оценка по всем априорам
-            print("\nРасчёт медианного прогноза по всем априорам...")
-            priors_for_median = [
-                'minnesota',
-                'normal_flat',
-                'normal_wishart',
-                'sims_zha_normal_flat',
-                'sims_zha_normal_wishart'
-            ]
-
-            all_forecasts = []
-            all_conf_samples = []
-
-            for prior_name in priors_for_median:
-                print(f"\nОбработка априора: {prior_name}")
-                try:
-                    if prior_name == 'minnesota':
-                        lambda1, lambda2, lambda3 = optimize_minnesota_hyperparameters(Y, p, exog=exog)
-                        kwargs = {'lambda1': lambda1, 'lambda2': lambda2, 'lambda3': lambda3}
-                    elif prior_name == 'normal_wishart':
-                        v_0, s_0 = optimize_normal_wishart_hyperparameters(Y, p, exog=exog)
-                        kwargs = {'v_0': v_0, 'S_0': np.eye(n) * s_0}
-                    elif prior_name == 'sims_zha_normal_flat':
-                        lambda1, lambda2, lambda3, mu5, mu6 = optimize_sims_zha_normal_flat_hyperparameters(Y, p, exog=exog)
-                        kwargs = {'lambda1': lambda1, 'lambda2': lambda2, 'lambda3': lambda3, 'mu5': mu5, 'mu6': mu6}
-                    elif prior_name == 'sims_zha_normal_wishart':
-                        lambda1, lambda2, lambda3, mu5, mu6 = optimize_sims_zha_normal_wishart_hyperparameters(Y, p, exog=exog)
-                        kwargs = {
-                            'lambda1': lambda1, 'lambda2': lambda2, 'lambda3': lambda3,
-                            'mu5': mu5, 'mu6': mu6, 'v_0': n + 2, 'S_0': np.eye(n) * 0.1
-                        }
-                    else:
-                        kwargs = {}
-
-                    post_mean, post_var = bvar_estimate(Y, p, prior_name, exog=exog, **kwargs)
-                    fc, ci = forecast_bvar(Y, post_mean, post_var, p, steps=steps, exog_future=exog_future)
-                    all_forecasts.append(fc)
-                    all_conf_samples.append(ci['samples'])
-                    print(f"Успешно: {prior_name}")
-                except Exception as e:
-                    print(f"Ошибка в {prior_name}: {str(e)}")
-                    continue
-
-            if not all_forecasts:
-                raise ValueError("Не удалось построить ни одного прогноза.")
-
-            forecasts = np.median(np.stack(all_forecasts), axis=0)
-            combined_samples = np.concatenate(all_conf_samples, axis=0)
-            conf = {
-                'samples': combined_samples,
-                '5%': np.percentile(combined_samples, 5, axis=0),
-                '95%': np.percentile(combined_samples, 95, axis=0)
-            }
-            prior_type = 'median_combined'
-
-        elif prior_choice == '6':
-            # Автоматический подбор лучшего априора
-            print("\nАвтоматический подбор априора в процессе...")
-            priors_to_test = [
-                ('minnesota', optimize_minnesota_hyperparameters),
-                ('normal_flat', None),
-                ('normal_wishart', optimize_normal_wishart_hyperparameters),
-                ('sims_zha_normal_flat', optimize_sims_zha_normal_flat_hyperparameters),
-                ('sims_zha_normal_wishart', optimize_sims_zha_normal_wishart_hyperparameters)
-            ]
-
-            best_score = float('inf')
-            best_prior = None
-            best_params = None
-
-            for prior_name, optimizer in priors_to_test:
-                print(f"\nТестирование априора: {prior_name}")
-                try:
-                    if optimizer:
-                        if prior_name == 'minnesota':
-                            params = optimizer(Y, p, exog=exog)
-                            kwargs = {'lambda1': params[0], 'lambda2': params[1], 'lambda3': params[2]}
-                        elif prior_name == 'normal_wishart':
-                            v_0, s_0 = optimizer(Y, p, exog=exog)
-                            kwargs = {'v_0': v_0, 'S_0': np.eye(n) * s_0}
-                        elif prior_name.startswith('sims_zha'):
-                            params = optimizer(Y, p, exog=exog)
-                            kwargs = {
-                                'lambda1': params[0], 'lambda2': params[1], 'lambda3': params[2],
-                                'mu5': params[3], 'mu6': params[4]
-                            }
-                            if prior_name == 'sims_zha_normal_wishart':
-                                kwargs.update({'v_0': n + 2, 'S_0': np.eye(n) * 0.1})
-                    else:
-                        kwargs = {}
-
-                    split_idx = int(0.8 * len(Y))
-                    Y_train, Y_val = Y[:split_idx], Y[split_idx:]
-                    exog_train = exog[:split_idx] if exog is not None else None
-                    exog_val = exog[split_idx:] if exog is not None else None
-
-                    post_mean, post_var = bvar_estimate(Y_train, p, prior_name, exog=exog_train, **kwargs)
-
-                    step_len = min(steps, len(Y_val))
-                    exog_future = exog_val[:step_len] if exog is not None else None
-
-                    fc, _ = forecast_bvar(Y_train, post_mean, post_var, p, steps=step_len, exog_future=exog_future)
-                    score = np.mean((fc - Y_val[:step_len]) ** 2)
-                    print(f"Ошибка прогноза: {score:.4f}")
-
-                    if score < best_score:
-                        best_score = score
-                        best_prior = prior_name
-                        best_params = kwargs.copy()
-                except Exception as e:
-                    print(f"Ошибка при тестировании {prior_name}: {str(e)}")
-                    continue
-
-            if best_prior is None:
-                print("\nНе удалось подобрать априор. Используется Minnesota prior по умолчанию.")
-                best_prior = 'minnesota'
-                best_params = {'lambda1': 0.2, 'lambda2': 0.5, 'lambda3': 1.0}
-
-            print(f"\nВыбран лучший априор: {best_prior} с ошибкой {best_score:.4f}")
-            print("Оптимальные параметры:", best_params)
-
-            prior_type = best_prior
-            prior_kwargs = best_params
-            post_mean, post_var = bvar_estimate(Y, p, prior_type, exog=exog, **prior_kwargs)
-            forecasts, conf = forecast_bvar(Y, post_mean, post_var, p, steps=steps, exog_future=exog_future)
-
+            counts = Counter(p_results)
+            modal_p = max(counts, key=counts.get)
+            ties = [k for k, v in counts.items() if v == counts[modal_p]]
+            modal_p = min(ties)
+            print(f"\nМодальное число лагов среди всех априоров: p = {modal_p}")
+            p = modal_p
         else:
-            # Обработка стандартных априоров (1-5)
-            prior_type_map = {
-                '1': 'minnesota',
-                '2': 'normal_flat',
-                '3': 'normal_wishart',
-                '4': 'sims_zha_normal_flat',
-                '5': 'sims_zha_normal_wishart'
-            }
-            prior_type = prior_type_map.get(prior_choice)
+            kwargs = default_kwargs(selected_prior_for_lag, Y.shape[1])
+            best_p = min_p
+            best_score = float('inf')
+            for candidate_p in range(min_p, max_p + 1):
+                score = calculate_bic_aic(Y, candidate_p, selected_prior_for_lag, kwargs,
+                                          exog=exog,
+                                          criterion='bic' if lag_choice == '2' else 'aic')
+                print(f"p={candidate_p}, score={score:.3f}")
+                if score < best_score:
+                    best_score = score
+                    best_p = candidate_p
+            print(f"Оптимальное число лагов: {best_p}")
+            p = best_p
 
-            if prior_type is None:
-                print("Неверный выбор априора. Используется Minnesota prior по умолчанию.")
-                prior_type = 'minnesota'
+    print(f"\nВыбран порядок лагов p = {p}")
+
+    # Выбор априора
+    if not auto_apply_prior:
+        print("\nВыберите тип априорного распределения для дальнейшей оценки и прогноза:")
+        print("1. Litterman-Minnesota prior (стандартная рекурсивная BVAR)")
+        print("2. Normal-Flat prior (слабая информация)")
+        print("3. Normal-Wishart prior (усиление ковариации)")
+        print("4. Sims-Zha Normal-Flat prior (структурная BVAR со слабой информацией)")
+        print("5. Sims-Zha Normal-Wishart prior (структурная BVAR с усилением ковариации)")
+        print("6. Автоматический подбор распределения с оптимизацией гиперпараметров")
+        print("7. Медианная оценка по всем доступным распределениям")
+        prior_choice = input("Введите номер (1-7): ").strip()
+
+    if prior_choice == '7':
+        # Медианная оценка по всем априорам
+        print("\nРасчёт медианного прогноза по всем априорам...")
+        priors_for_median = [
+            'minnesota',
+            'normal_flat',
+            'normal_wishart',
+            'sims_zha_normal_flat',
+            'sims_zha_normal_wishart'
+        ]
+
+        all_forecasts = []
+        all_conf_samples = []
+
+        for prior_name in priors_for_median:
+            print(f"\nОбработка априора: {prior_name}")
+            try:
+                if prior_name == 'minnesota':
+                    lambda1, lambda2, lambda3 = optimize_minnesota_hyperparameters(Y, p, exog=exog)
+                    kwargs = {'lambda1': lambda1, 'lambda2': lambda2, 'lambda3': lambda3}
+                elif prior_name == 'normal_wishart':
+                    v_0, s_0 = optimize_normal_wishart_hyperparameters(Y, p, exog=exog)
+                    kwargs = {'v_0': v_0, 'S_0': np.eye(Y.shape[1]) * s_0}
+                elif prior_name == 'sims_zha_normal_flat':
+                    lambda1, lambda2, lambda3, mu5, mu6 = optimize_sims_zha_normal_flat_hyperparameters(Y, p, exog=exog)
+                    kwargs = {'lambda1': lambda1, 'lambda2': lambda2, 'lambda3': lambda3, 'mu5': mu5, 'mu6': mu6}
+                elif prior_name == 'sims_zha_normal_wishart':
+                    lambda1, lambda2, lambda3, mu5, mu6 = optimize_sims_zha_normal_wishart_hyperparameters(Y, p,
+                                                                                                           exog=exog)
+                    kwargs = {
+                        'lambda1': lambda1, 'lambda2': lambda2, 'lambda3': lambda3,
+                        'mu5': mu5, 'mu6': mu6, 'v_0': Y.shape[1] + 2, 'S_0': np.eye(Y.shape[1]) * 0.1
+                    }
+                else:
+                    kwargs = {}
+
+                post_mean, post_var = bvar_estimate(Y, p, prior_name, exog=exog, **kwargs)
+                fc, ci = forecast_bvar(Y, post_mean, post_var, p, steps=steps,
+                                       exog_future=exog_future if use_exog else None)
+                all_forecasts.append(fc)
+                all_conf_samples.append(ci['samples'])
+                print(f"Успешно: {prior_name}")
+            except Exception as e:
+                print(f"Ошибка в {prior_name}: {str(e)}")
+                continue
+
+        if not all_forecasts:
+            raise ValueError("Не удалось построить ни одного прогноза.")
+
+        forecasts = np.median(np.stack(all_forecasts), axis=0)
+        combined_samples = np.concatenate(all_conf_samples, axis=0)
+        conf = {
+            'samples': combined_samples,
+            '5%': np.percentile(combined_samples, 5, axis=0),
+            '95%': np.percentile(combined_samples, 95, axis=0)
+        }
+        prior_type = 'median_combined'
+
+    elif prior_choice == '6':
+        # Автоматический подбор лучшего априора
+        print("\nАвтоматический подбор априора в процессе...")
+        priors_to_test = [
+            ('minnesota', optimize_minnesota_hyperparameters),
+            ('normal_flat', None),
+            ('normal_wishart', optimize_normal_wishart_hyperparameters),
+            ('sims_zha_normal_flat', optimize_sims_zha_normal_flat_hyperparameters),
+            ('sims_zha_normal_wishart', optimize_sims_zha_normal_wishart_hyperparameters)
+        ]
+
+        best_score = float('inf')
+        best_prior = None
+        best_params = None
+
+        for prior_name, optimizer in priors_to_test:
+            print(f"\nТестирование априора: {prior_name}")
+            try:
+                if optimizer:
+                    if prior_name == 'minnesota':
+                        params = optimizer(Y, p, exog=exog)
+                        kwargs = {'lambda1': params[0], 'lambda2': params[1], 'lambda3': params[2]}
+                    elif prior_name == 'normal_wishart':
+                        v_0, s_0 = optimizer(Y, p, exog=exog)
+                        kwargs = {'v_0': v_0, 'S_0': np.eye(Y.shape[1]) * s_0}
+                    elif prior_name.startswith('sims_zha'):
+                        params = optimizer(Y, p, exog=exog)
+                        kwargs = {
+                            'lambda1': params[0], 'lambda2': params[1], 'lambda3': params[2],
+                            'mu5': params[3], 'mu6': params[4]
+                        }
+                        if prior_name == 'sims_zha_normal_wishart':
+                            kwargs.update({'v_0': Y.shape[1] + 2, 'S_0': np.eye(Y.shape[1]) * 0.1})
+                else:
+                    kwargs = {}
+
+                split_idx = int(0.8 * len(Y))
+                Y_train, Y_val = Y[:split_idx], Y[split_idx:]
+                exog_train = exog[:split_idx] if use_exog and exog is not None else None
+                exog_val = exog[split_idx:] if use_exog and exog is not None else None
+
+                post_mean, post_var = bvar_estimate(Y_train, p, prior_name, exog=exog_train, **kwargs)
+
+                step_len = min(steps, len(Y_val))
+                exog_future_val = exog_val[:step_len] if use_exog and exog is not None else None
+
+                fc, _ = forecast_bvar(Y_train, post_mean, post_var, p, steps=step_len, exog_future=exog_future_val)
+                score = np.mean((fc - Y_val[:step_len]) ** 2)
+                print(f"Ошибка прогноза: {score:.4f}")
+
+                if score < best_score:
+                    best_score = score
+                    best_prior = prior_name
+                    best_params = kwargs.copy()
+            except Exception as e:
+                print(f"Ошибка при тестировании {prior_name}: {str(e)}")
+                continue
+
+        if best_prior is None:
+            print("\nНе удалось подобрать априор. Используется Minnesota prior по умолчанию.")
+            best_prior = 'minnesota'
+            best_params = {'lambda1': 0.2, 'lambda2': 0.5, 'lambda3': 1.0}
+
+        print(f"\nВыбран лучший априор: {best_prior} с ошибкой {best_score:.4f}")
+        print("Оптимальные параметры:", best_params)
+
+        prior_type = best_prior
+        prior_kwargs = best_params
+        post_mean, post_var = bvar_estimate(Y, p, prior_type, exog=exog, **prior_kwargs)
+        forecasts, conf = forecast_bvar(Y, post_mean, post_var, p, steps=steps,
+                                        exog_future=exog_future if use_exog else None)
+
+    else:
+        # Обработка стандартных априоров (1-5)
+        prior_type_map = {
+            '1': 'minnesota',
+            '2': 'normal_flat',
+            '3': 'normal_wishart',
+            '4': 'sims_zha_normal_flat',
+            '5': 'sims_zha_normal_wishart'
+        }
+        prior_type = prior_type_map.get(prior_choice)
+
+        if prior_type is None:
+            print("Неверный выбор априора. Используется Minnesota prior по умолчанию.")
+            prior_type = 'minnesota'
+            prior_kwargs = {'lambda1': 0.2, 'lambda2': 0.5, 'lambda3': 1.0}
+
+        if prior_type == 'minnesota':
+            print("\nМиннесотский априор:")
+            print("1. Значения по умолчанию")
+            print("2. Ввести λ-параметры вручную")
+            print("3. Оптимизировать λ-параметры")
+            mn_choice = input("Выберите вариант (1-3): ").strip()
+
+            if mn_choice == '2':
+                prior_kwargs = {
+                    'lambda1': float(input("lambda1 (0.01-1.0): ") or 0.2),
+                    'lambda2': float(input("lambda2 (0.01-1.0): ") or 0.5),
+                    'lambda3': float(input("lambda3 (0.1-10.0): ") or 1.0)
+                }
+            elif mn_choice == '3':
+                print("Оптимизация гиперпараметров...")
+                λ1, λ2, λ3 = optimize_minnesota_hyperparameters(Y, p, exog=exog)
+                print(f"Оптимальные: λ1={λ1:.3f}, λ2={λ2:.3f}, λ3={λ3:.3f}")
+                prior_kwargs = {'lambda1': λ1, 'lambda2': λ2, 'lambda3': λ3}
+            else:
                 prior_kwargs = {'lambda1': 0.2, 'lambda2': 0.5, 'lambda3': 1.0}
 
-            if prior_type == 'minnesota':
-                print("\nМиннесотский априор:")
-                print("1. Значения по умолчанию")
-                print("2. Ввести λ-параметры вручную")
-                print("3. Оптимизировать λ-параметры")
-                mn_choice = input("Выберите вариант (1-3): ").strip()
+        elif prior_type == 'normal_flat':
+            print("\nИспользуется Normal-Flat априор (параметров нет).")
+            prior_kwargs = {}
 
-                if mn_choice == '2':
-                    prior_kwargs = {
-                        'lambda1': float(input("lambda1 (0.01-1.0): ") or 0.2),
-                        'lambda2': float(input("lambda2 (0.01-1.0): ") or 0.5),
-                        'lambda3': float(input("lambda3 (0.1-10.0): ") or 1.0)
-                    }
-                elif mn_choice == '3':
-                    print("Оптимизация гиперпараметров...")
-                    λ1, λ2, λ3 = optimize_minnesota_hyperparameters(Y, p, exog=exog)
-                    print(f"Оптимальные: λ1={λ1:.3f}, λ2={λ2:.3f}, λ3={λ3:.3f}")
-                    prior_kwargs = {'lambda1': λ1, 'lambda2': λ2, 'lambda3': λ3}
+        elif prior_type == 'normal_wishart':
+            print("\nNormal-Wishart априор:")
+            print("1. Значения по умолчанию")
+            print("2. Ввести параметры вручную")
+            print("3. Оптимизировать параметры")
+            nw_choice = input("Выберите вариант (1-3): ").strip()
+
+            if nw_choice == '2':
+                prior_kwargs = {
+                    'v_0': int(input(f"v₀ (> {Y.shape[1] - 1}, по умолчанию {Y.shape[1] + 2}): ") or Y.shape[1] + 2),
+                    'S_0': np.eye(Y.shape[1]) * float(input("Масштаб S₀ (по умолчанию 0.1): ") or 0.1)
+                }
+            elif nw_choice == '3':
+                print("Оптимизация гиперпараметров Normal-Wishart...")
+                v_0_opt, s_0_opt = optimize_normal_wishart_hyperparameters(Y, p, exog=exog)
+                print(f"Оптимальные параметры: v₀={v_0_opt}, масштаб S₀={s_0_opt:.3f}")
+                prior_kwargs = {'v_0': v_0_opt, 'S_0': np.eye(Y.shape[1]) * s_0_opt}
+            else:
+                prior_kwargs = {'v_0': Y.shape[1] + 2, 'S_0': np.eye(Y.shape[1]) * 0.1}
+
+        elif prior_type.startswith('sims_zha'):
+            print(f"\n{prior_type} априор:")
+            print("1. Значения по умолчанию")
+            print("2. Ввести параметры вручную")
+            print("3. Оптимизировать параметры")
+            sz_choice = input("Выберите вариант (1-3): ").strip()
+
+            if sz_choice == '2':
+                prior_kwargs = {
+                    'lambda1': float(input("λ1 (0.01-1.0): ") or 0.1),
+                    'lambda2': float(input("λ2 (0.01-1.0): ") or 0.5),
+                    'lambda3': float(input("λ3 (0.1-10.0): ") or 1.0),
+                    'mu5': float(input("μ5 (0.01-0.5): ") or 0.1),
+                    'mu6': float(input("μ6 (0.5-5.0): ") or 1.0)
+                }
+                if prior_type == 'sims_zha_normal_wishart':
+                    prior_kwargs.update({'v_0': Y.shape[1] + 2, 'S_0': np.eye(Y.shape[1]) * 0.1})
+            elif sz_choice == '3':
+                print(f"Оптимизация параметров {prior_type}...")
+                if prior_type == 'sims_zha_normal_flat':
+                    params = optimize_sims_zha_normal_flat_hyperparameters(Y, p, exog=exog)
                 else:
-                    prior_kwargs = {'lambda1': 0.2, 'lambda2': 0.5, 'lambda3': 1.0}
+                    params = optimize_sims_zha_normal_wishart_hyperparameters(Y, p, exog=exog)
+                print(
+                    f"Оптимальные: λ1={params[0]:.3f}, λ2={params[1]:.3f}, λ3={params[2]:.3f}, μ5={params[3]:.3f}, μ6={params[4]:.3f}")
+                prior_kwargs = {
+                    'lambda1': params[0], 'lambda2': params[1], 'lambda3': params[2],
+                    'mu5': params[3], 'mu6': params[4]
+                }
+                if prior_type == 'sims_zha_normal_wishart':
+                    prior_kwargs.update({'v_0': Y.shape[1] + 2, 'S_0': np.eye(Y.shape[1]) * 0.1})
+            else:
+                prior_kwargs = {
+                    'lambda1': 0.1, 'lambda2': 0.5, 'lambda3': 1.0,
+                    'mu5': 0.1, 'mu6': 1.0
+                }
+                if prior_type == 'sims_zha_normal_wishart':
+                    prior_kwargs.update({'v_0': Y.shape[1] + 2, 'S_0': np.eye(Y.shape[1]) * 0.1})
 
-            elif prior_type == 'normal_flat':
-                print("\nИспользуется Normal-Flat априор (параметров нет).")
-                prior_kwargs = {}
+        post_mean, post_var = bvar_estimate(Y, p, prior_type, exog=exog, **prior_kwargs)
+        forecasts, conf = forecast_bvar(Y, post_mean, post_var, p, steps=steps,
+                                        exog_future=exog_future if use_exog else None)
 
-            elif prior_type == 'normal_wishart':
-                print("\nNormal-Wishart априор:")
-                print("1. Значения по умолчанию")
-                print("2. Ввести параметры вручную")
-                print("3. Оптимизировать параметры")
-                nw_choice = input("Выберите вариант (1-3): ").strip()
-
-                if nw_choice == '2':
-                    prior_kwargs = {
-                        'v_0': int(input(f"v₀ (> {n - 1}, по умолчанию {n + 2}): ") or n + 2),
-                        'S_0': np.eye(n) * float(input("Масштаб S₀ (по умолчанию 0.1): ") or 0.1)
-                    }
-                elif nw_choice == '3':
-                    print("Оптимизация гиперпараметров Normal-Wishart...")
-                    v_0_opt, s_0_opt = optimize_normal_wishart_hyperparameters(Y, p, exog=exog)
-                    print(f"Оптимальные параметры: v₀={v_0_opt}, масштаб S₀={s_0_opt:.3f}")
-                    prior_kwargs = {'v_0': v_0_opt, 'S_0': np.eye(n) * s_0_opt}
-                else:
-                    prior_kwargs = {'v_0': n + 2, 'S_0': np.eye(n) * 0.1}
-
-            elif prior_type.startswith('sims_zha'):
-                print(f"\n{prior_type} априор:")
-                print("1. Значения по умолчанию")
-                print("2. Ввести параметры вручную")
-                print("3. Оптимизировать параметры")
-                sz_choice = input("Выберите вариант (1-3): ").strip()
-
-                if sz_choice == '2':
-                    prior_kwargs = {
-                        'lambda1': float(input("λ1 (0.01-1.0): ") or 0.1),
-                        'lambda2': float(input("λ2 (0.01-1.0): ") or 0.5),
-                        'lambda3': float(input("λ3 (0.1-10.0): ") or 1.0),
-                        'mu5': float(input("μ5 (0.01-0.5): ") or 0.1),
-                        'mu6': float(input("μ6 (0.5-5.0): ") or 1.0)
-                    }
-                    if prior_type == 'sims_zha_normal_wishart':
-                        prior_kwargs.update({'v_0': n + 2, 'S_0': np.eye(n) * 0.1})
-                elif sz_choice == '3':
-                    print(f"Оптимизация параметров {prior_type}...")
-                    if prior_type == 'sims_zha_normal_flat':
-                        params = optimize_sims_zha_normal_flat_hyperparameters(Y, p, exog=exog)
-                    else:
-                        params = optimize_sims_zha_normal_wishart_hyperparameters(Y, p, exog=exog)
-                    print(f"Оптимальные: λ1={params[0]:.3f}, λ2={params[1]:.3f}, λ3={params[2]:.3f}, μ5={params[3]:.3f}, μ6={params[4]:.3f}")
-                    prior_kwargs = {
-                        'lambda1': params[0], 'lambda2': params[1], 'lambda3': params[2],
-                        'mu5': params[3], 'mu6': params[4]
-                    }
-                    if prior_type == 'sims_zha_normal_wishart':
-                        prior_kwargs.update({'v_0': n + 2, 'S_0': np.eye(n) * 0.1})
-                else:
-                    prior_kwargs = {
-                        'lambda1': 0.1, 'lambda2': 0.5, 'lambda3': 1.0,
-                        'mu5': 0.1, 'mu6': 1.0
-                    }
-                    if prior_type == 'sims_zha_normal_wishart':
-                        prior_kwargs.update({'v_0': n + 2, 'S_0': np.eye(n) * 0.1})
-
-            post_mean, post_var = bvar_estimate(Y, p, prior_type, exog=exog, **prior_kwargs)
-            forecasts, conf = forecast_bvar(Y, post_mean, post_var, p, steps=steps, exog_future=exog_future)
-
-        # Выбор переменных для визуализации
-        print("\nВыберите переменные для визуализации:")
-        print(f"\nЭндогенные переменные (доступно: 1-{n}):")
-        endog_choice = input("Введите номера через пробел (например '1 2'), или оставьте пустым для всех: ").strip()
-        try:
-            endog_vars = [int(x) - 1 for x in endog_choice.split() if x.isdigit() and 1 <= int(x) <= n]
-            if not endog_vars and endog_choice != '':
-                print("Неверный ввод. Будут показаны все эндогенные переменные.")
-                endog_vars = None
-        except:
+    # Выбор переменных для визуализации
+    print("\nВыберите переменные для визуализации:")
+    print(f"\nЭндогенные переменные (доступно: 1-{Y.shape[1]}):")
+    endog_choice = input("Введите номера через пробел (например '1 2'), или оставьте пустым для всех: ").strip()
+    try:
+        endog_vars = [int(x) - 1 for x in endog_choice.split() if x.isdigit() and 1 <= int(x) <= Y.shape[1]]
+        if not endog_vars and endog_choice != '':
             print("Неверный ввод. Будут показаны все эндогенные переменные.")
             endog_vars = None
+    except:
+        print("Неверный ввод. Будут показаны все эндогенные переменные.")
+        endog_vars = None
 
-        exog_vars = None
-        if use_exog:
-            print(f"\nЭкзогенные переменные (доступно: 1-{m}):")
-            exog_choice = input("Введите номера через пробел (например '1 2'), или оставьте пустым для всех: ").strip()
-            try:
-                exog_vars = [int(x) - 1 for x in exog_choice.split() if x.isdigit() and 1 <= int(x) <= m]
-                if not exog_vars and exog_choice != '':
-                    print("Неверный ввод. Будут показаны все экзогенные переменные.")
-                    exog_vars = None
-            except:
+    exog_vars = None
+    if use_exog and exog is not None:
+        print(f"\nЭкзогенные переменные (доступно: 1-{exog.shape[1]}):")
+        exog_choice = input("Введите номера через пробел (например '1 2'), или оставьте пустым для всех: ").strip()
+        try:
+            exog_vars = [int(x) - 1 for x in exog_choice.split() if x.isdigit() and 1 <= int(x) <= exog.shape[1]]
+            if not exog_vars and exog_choice != '':
                 print("Неверный ввод. Будут показаны все экзогенные переменные.")
                 exog_vars = None
+        except:
+            print("Неверный ввод. Будут показаны все экзогенные переменные.")
+            exog_vars = None
 
-        # Вывод результатов
-        print("\nРезультаты:")
-        if prior_choice == '7':
-            print("Тип априора: Медианный прогноз по всем априорам")
-        else:
-            print(f"Тип априора: {prior_type}")
-            if prior_kwargs:
-                print("Параметры априора:",
-                      {k: (v if not isinstance(v, np.ndarray) else v[0, 0]) for k, v in prior_kwargs.items()})
+    # Вывод результатов
+    print("\nРезультаты:")
+    if prior_choice == '7':
+        print("Тип априора: Медианный прогноз по всем априорам")
+    else:
+        print(f"Тип априора: {prior_type}")
+        if prior_kwargs:
+            print("Параметры априора:",
+                  {k: (v if not isinstance(v, np.ndarray) else v[0, 0]) for k, v in prior_kwargs.items()})
 
-        # Визуализация
-        plot_results(Y, forecasts, conf, p, endog_vars=endog_vars, exog_vars=exog_vars,
-                     exog_data=exog if use_exog else None)
+    print(f"\nДлина прогноза: {steps} периодов")
+
+    # Визуализация
+    plot_results(Y, forecasts, conf, p, endog_vars=endog_vars, exog_vars=exog_vars,
+                 exog_data=exog if use_exog else None)
 
 
 if __name__ == "__main__":
