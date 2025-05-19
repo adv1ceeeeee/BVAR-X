@@ -969,7 +969,7 @@ def user_interface(dates=None):
     sheet_name = "Eviews"
 
     print("\nЗагрузка данных из Excel...")
-    Y, exog, scaler_Y, scaler_exog = load_data_from_excel(file_path, sheet_name)
+    Y, exog, scaler_Y, scaler_exog, dates = load_data_from_excel(file_path, sheet_name)
 
     if Y is None:
         raise ValueError("Не удалось загрузить данные из Excel. Проверьте файл и структуру данных.")
