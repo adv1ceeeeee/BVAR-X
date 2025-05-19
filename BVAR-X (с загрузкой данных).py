@@ -4,6 +4,7 @@ from scipy.linalg import inv, eigh
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 from collections import Counter
+from sklearn.preprocessing import StandardScaler
 prior_kwargs = {}
 
 
@@ -332,7 +333,7 @@ def bvar_estimate(Y, p, prior_type='minnesota', exog=None, **prior_kwargs):
     return posterior_mean, posterior_var
 
 
-def forecast_bvar(Y, post_mean, post_var, p, steps=10, n_samples=1000, exog_future=None):
+def forecast_bvar(Y, post_mean, post_var, p, steps=10, n_samples=1000, exog_future=None, scaler_Y=None):
     """
     Генерация прогнозов с поддержкой экзогенных переменных.
 
@@ -357,9 +358,9 @@ def forecast_bvar(Y, post_mean, post_var, p, steps=10, n_samples=1000, exog_futu
 
     for i in range(n_samples):
         # Проверка и исправление post_var
-        post_var = (post_var + post_var.T) / 2
+        post_var = (post_var + post_var.T) / 2  # Делаем симметричной
         eigvals, eigvecs = eigh(post_var)
-        eigvals[eigvals < 1e-8] = 1e-8  # Убираем отрицательные или слишком маленькие значения
+        eigvals[eigvals < 1e-8] = 1e-8  # Убираем отрицательные значения
         post_var = eigvecs @ np.diag(eigvals) @ eigvecs.T
 
         # Пробуем сэмплировать, если не получается — добавляем регуляризацию
@@ -388,12 +389,23 @@ def forecast_bvar(Y, post_mean, post_var, p, steps=10, n_samples=1000, exog_futu
         '5%': np.percentile(samples, 5, axis=0),
         '95%': np.percentile(samples, 95, axis=0)
     }
+    # Обратное преобразование прогнозов
+    if scaler_Y is not None:
+        for i in range(n_samples):
+            samples[i] = scaler_Y.inverse_transform(samples[i])
+
+    forecasts = np.median(samples, axis=0)
+    conf_intervals = {
+        'samples': samples,
+        '5%': np.percentile(samples, 5, axis=0),
+        '95%': np.percentile(samples, 95, axis=0)
+    }
     return forecasts, conf_intervals
 
 
-def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=None, exog_data=None):
+def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=None,
+                exog_data=None, scaler_Y=None, scaler_exog=None):
     """Визуализация результатов с разделением на эндогенные и экзогенные переменные.
-
     Параметры:
     - Y: Фактические данные эндогенных переменных (T x n)
     - forecasts: Прогнозы (steps x n)
@@ -403,6 +415,22 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
     - exog_vars: Список индексов экзогенных переменных для визуализации
     - exog_data: Матрица экзогенных переменных (T x m)
     """
+    # Обратное преобразование данных для визуализации
+    if scaler_Y is not None:
+        Y = scaler_Y.inverse_transform(Y)
+        forecasts = scaler_Y.inverse_transform(forecasts)
+        conf_intervals['samples'] = scaler_Y.inverse_transform(
+            conf_intervals['samples'].reshape(-1, Y.shape[1])).reshape(conf_intervals['samples'].shape)
+        conf_intervals['5%'] = scaler_Y.inverse_transform(conf_intervals['5%'])
+        conf_intervals['95%'] = scaler_Y.inverse_transform(conf_intervals['95%'])
+
+    if exog_data is not None and scaler_exog is not None:
+        exog_data = scaler_exog.inverse_transform(exog_data)
+
+    # Названия переменных
+    endog_names = ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']
+    exog_names = ['Investedfunds', 'Plannedrate']
+
     n_endog = Y.shape[1]  # Количество эндогенных переменных
     n_exog = exog_data.shape[1] if exog_data is not None else 0  # Количество экзогенных переменных
 
@@ -449,9 +477,16 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
                             label=f'{100 - 2 * percentiles[j]}% интервал')
 
         ax.axvline(x=T - 1, color='gray', linestyle='--', label='Начало прогноза')
-        ax.set_title(f'Эндогенная переменная {var + 1}')
+        ax.set_title(f'Эндогенная переменная: {endog_names[var]}')
+        ax.set_xlabel('Месяц')
         ax.legend()
         ax.grid(True)
+
+        # Улучшаем подписи по оси X (месяцы)
+        months = [f"Месяц {i + 1}" for i in range(T + len(forecasts))]
+        ax.set_xticks(range(0, T + len(forecasts), 5))
+        ax.set_xticklabels(months[::5], rotation=45)
+
         current_plot += 1
 
     # Визуализация экзогенных переменных
@@ -463,9 +498,16 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
             # Фактические данные
             ax.plot(range(T), exog_data[:, var], 'g-', lw=2, label='Экзогенные данные')
 
-            ax.set_title(f'Экзогенная переменная {var + 1}')
+            ax.set_title(f'Экзогенная переменная: {exog_names[var]}')
+            ax.set_xlabel('Месяц')
             ax.legend()
             ax.grid(True)
+
+            # Улучшаем подписи по оси X (месяцы)
+            months = [f"Месяц {i + 1}" for i in range(T)]
+            ax.set_xticks(range(0, T, 5))
+            ax.set_xticklabels(months[::5], rotation=45)
+
             current_plot += 1
 
     plt.tight_layout()
@@ -723,7 +765,34 @@ def calculate_bic_aic(Y, p, prior_type, prior_kwargs, criterion='bic', exog=None
         penalty = 2 * num_params
 
     score = -2 * ll + penalty
+
     return score
+
+# Предобработка данных
+def preprocess_data(Y, exog=None):
+    # Проверка на отрицательные значения
+    if np.any(Y < 0):
+        Y = Y - np.min(Y, axis=0) + 1e-6  # Сдвигаем в положительную область
+
+    # Логарифмирование
+    Y = np.log1p(Y)
+
+    if exog is not None:
+        if np.any(exog < 0):
+            exog = exog - np.min(exog, axis=0) + 1e-6
+        exog = np.log1p(exog)
+
+    # Стандартизация
+    scaler_Y = StandardScaler()
+    Y = scaler_Y.fit_transform(Y)
+
+    if exog is not None:
+        scaler_exog = StandardScaler()
+        exog = scaler_exog.fit_transform(exog)
+    else:
+        scaler_exog = None
+
+    return Y, exog, scaler_Y, scaler_exog
 
 
 # ------------------------------------------------------------------
@@ -785,11 +854,10 @@ def compute_max_p(T, n, m=0, max_ratio=0.25):
 
 
 def load_data_from_excel(file_path, sheet_name):
-    """Загрузка реальных данных из Excel-файла с разделением экзо и эндо данных."""
     try:
         df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-        # Преобразуем столбцы к числам (убираем пробелы)
+        # Преобразование и очистка данных (ваш существующий код)
         for col in ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients', 'Investedfunds', 'Plannedrate']:
             df[col] = (
                 df[col]
@@ -800,21 +868,23 @@ def load_data_from_excel(file_path, sheet_name):
                 .astype(float)
             )
 
-        # Эндогенные — только строки, где все эндогенные НЕ NaN
+        # Выделение данных
         mask_endog = ~df[['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].isnull().any(axis=1)
         Y = df.loc[mask_endog, ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].values
 
-        # Экзогенные — все строки, где экзогенные НЕ NaN
         mask_exog = ~df[['Investedfunds', 'Plannedrate']].isnull().any(axis=1)
         exog = df.loc[mask_exog, ['Investedfunds', 'Plannedrate']].values
 
+        # Нормализация данных
+        Y, exog, scaler_Y, scaler_exog = preprocess_data(Y, exog)
+
         print(f"Y.shape={Y.shape}, exog.shape={exog.shape}")
 
-        return Y, exog
+        return Y, exog, scaler_Y, scaler_exog  # Возвращаем и scaler'ы для обратного преобразования
 
     except Exception as e:
         print(f"Ошибка при загрузке данных: {str(e)}")
-        return None, None
+        return None, None, None, None
 
 
 def user_interface():
@@ -833,12 +903,12 @@ def user_interface():
     sheet_name = "Eviews"
 
     print("\nЗагрузка данных из Excel...")
-    Y, exog = load_data_from_excel(file_path, sheet_name)
+    Y, exog, scaler_Y, scaler_exog = load_data_from_excel(file_path, sheet_name)
 
     if Y is None:
         raise ValueError("Не удалось загрузить данные из Excel. Проверьте файл и структуру данных.")
 
-    print("\nДанные успешно загружены:")
+    print("\nДанные успешно загружены и нормализованы:")
     print(f"Эндогенные переменные: Uninvestedfunds, NettoFunds, Reinvestedfunds, Totalclients")
     print(f"Количество наблюдений: {len(Y)}")
 
@@ -1276,7 +1346,8 @@ def user_interface():
 
     # Визуализация
     plot_results(Y, forecasts, conf, p, endog_vars=endog_vars, exog_vars=exog_vars,
-                 exog_data=exog if use_exog else None)
+                 exog_data=exog if use_exog else None,
+                 scaler_Y=scaler_Y, scaler_exog=scaler_exog)
 
 
 if __name__ == "__main__":
