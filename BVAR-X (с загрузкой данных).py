@@ -5,6 +5,8 @@ from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 from collections import Counter
 from sklearn.preprocessing import StandardScaler
+import matplotlib.dates as mdates
+from datetime import datetime, timedelta
 prior_kwargs = {}
 
 
@@ -404,7 +406,7 @@ def forecast_bvar(Y, post_mean, post_var, p, steps=10, n_samples=1000, exog_futu
 
 
 def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=None,
-                exog_data=None, scaler_Y=None, scaler_exog=None):
+                exog_data=None, scaler_Y=None, scaler_exog=None, dates=None):
     """Визуализация результатов с разделением на эндогенные и экзогенные переменные.
     Параметры:
     - Y: Фактические данные эндогенных переменных (T x n)
@@ -415,79 +417,142 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
     - exog_vars: Список индексов экзогенных переменных для визуализации
     - exog_data: Матрица экзогенных переменных (T x m)
     """
-    # Обратное преобразование данных для визуализации
-    if scaler_Y is not None:
-        Y = scaler_Y.inverse_transform(Y)
-        forecasts = scaler_Y.inverse_transform(forecasts)
-        conf_intervals['samples'] = scaler_Y.inverse_transform(
-            conf_intervals['samples'].reshape(-1, Y.shape[1])).reshape(conf_intervals['samples'].shape)
-        conf_intervals['5%'] = scaler_Y.inverse_transform(conf_intervals['5%'])
-        conf_intervals['95%'] = scaler_Y.inverse_transform(conf_intervals['95%'])
+    # Проверка наличия scaler_Y для обратного преобразования
+    if scaler_Y is None:
+        raise ValueError("Не передан scaler_Y для обратного преобразования данных")
 
-    if exog_data is not None and scaler_exog is not None:
-        exog_data = scaler_exog.inverse_transform(exog_data)
+    # Обратное преобразование данных в исходную шкалу
+    Y_original = scaler_Y.inverse_transform(Y)
+    forecasts_original = scaler_Y.inverse_transform(forecasts)
+
+    # Обратное преобразование доверительных интервалов
+    samples_reshaped = conf_intervals['samples'].reshape(-1, Y.shape[1])
+    samples_original = scaler_Y.inverse_transform(samples_reshaped)
+    samples_original = samples_original.reshape(conf_intervals['samples'].shape)
 
     # Названия переменных
-    endog_names = ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']
-    exog_names = ['Investedfunds', 'Plannedrate']
+    endog_names = {
+        0: 'Uninvested Funds',
+        1: 'Netto Funds',
+        2: 'Reinvested Funds',
+        3: 'Total Clients'
+    }
 
-    n_endog = Y.shape[1]  # Количество эндогенных переменных
-    n_exog = exog_data.shape[1] if exog_data is not None else 0  # Количество экзогенных переменных
+    exog_names = {
+        0: 'Invested Funds',
+        1: 'Planned Rate'
+    }
 
-    # Если не указаны переменные для визуализации, показываем все
+    # Подготовка дат
+    if dates is not None:
+        # Преобразуем в datetime, если это еще не сделано
+        if isinstance(dates[0], pd.Period):
+            dates = [d.to_timestamp() for d in dates]
+
+        # Создаем даты для прогноза
+        last_date = dates[-1]
+        if isinstance(last_date, pd.Timestamp):
+            forecast_dates = [last_date + pd.DateOffset(months=i + 1) for i in range(len(forecasts))]
+        else:
+            forecast_dates = [last_date + timedelta(days=30 * (i + 1)) for i in range(len(forecasts))]
+
+        all_dates = dates + forecast_dates
+    else:
+        # Если даты не переданы, используем числовые индексы
+        all_dates = range(len(Y) + len(forecasts))
+
+    # Определение переменных для отображения
+    n_endog = Y.shape[1]
+    n_exog = exog_data.shape[1] if exog_data is not None else 0
+
     if endog_vars is None:
         endog_vars = list(range(n_endog))
     if exog_vars is None and n_exog > 0:
         exog_vars = list(range(n_exog))
 
-    # Общее количество графиков
+    # Создаем графики
     n_plots = len(endog_vars) + (len(exog_vars) if exog_vars else 0)
     if n_plots == 0:
         print("Нет переменных для визуализации")
         return
 
-    fig, axes = plt.subplots(n_plots, 1, figsize=(12, 3 * n_plots))
+    fig, axes = plt.subplots(n_plots, 1, figsize=(14, 4 * n_plots))
     if n_plots == 1:
         axes = [axes]
 
-    # Цвета и прозрачность для градиентных полос ДИ прогноза
+    # Настройки стиля
     colors = ['#FF6B6B', '#FF8E8E', '#FFB5B5', '#FFD8D8']
     alphas = [0.1, 0.25, 0.5, 1]
     percentiles = [5, 10, 25, 50]
+    plt.style.use('seaborn')
 
     current_plot = 0
 
-    # Визуализация эндогенных переменных
+    # 1. Графики эндогенных переменных
     for var in endog_vars:
         ax = axes[current_plot]
-        T = len(Y)
 
         # Фактические данные
-        ax.plot(range(T), Y[:, var], 'b-', lw=2, label='Фактические данные')
+        ax.plot(dates, Y_original[:, var],
+                'b-', lw=2, label='Фактические данные')
 
-        # Прогнозы
-        ax.plot(range(T, T + len(forecasts)), forecasts[:, var], 'r--', lw=2, label='Прогноз (медиана)')
+        # Прогноз
+        ax.plot(forecast_dates, forecasts_original[:, var],
+                'r--', lw=2, label='Прогноз (медиана)')
 
-        # Градиентные доверительные интервалы
+        # Доверительные интервалы
         for j in range(len(percentiles)):
-            lower = np.percentile(conf_intervals['samples'][:, :, var], percentiles[j], axis=0)
-            upper = np.percentile(conf_intervals['samples'][:, :, var], 100 - percentiles[j], axis=0)
-            ax.fill_between(range(T, T + len(forecasts)), lower, upper,
+            lower = np.percentile(samples_original[:, :, var], percentiles[j], axis=0)
+            upper = np.percentile(samples_original[:, :, var], 100 - percentiles[j], axis=0)
+            ax.fill_between(forecast_dates, lower, upper,
                             color=colors[j], alpha=alphas[j],
                             label=f'{100 - 2 * percentiles[j]}% интервал')
 
-        ax.axvline(x=T - 1, color='gray', linestyle='--', label='Начало прогноза')
-        ax.set_title(f'Эндогенная переменная: {endog_names[var]}')
-        ax.set_xlabel('Месяц')
-        ax.legend()
-        ax.grid(True)
+        # Вертикальная линия начала прогноза
+        ax.axvline(x=dates[-1], color='gray', linestyle='--', label='Начало прогноза')
 
-        # Улучшаем подписи по оси X (месяцы)
-        months = [f"Месяц {i + 1}" for i in range(T + len(forecasts))]
-        ax.set_xticks(range(0, T + len(forecasts), 5))
-        ax.set_xticklabels(months[::5], rotation=45)
+        # Настройки графика
+        ax.set_title(f"{endog_names.get(var, f'Переменная {var + 1}')}")
+        ax.set_xlabel('Дата')
+        ax.grid(True)
+        ax.legend(loc='upper left')
+
+        # Форматирование дат
+        if dates is not None:
+            ax.xaxis.set_major_locator(mdates.MonthLocator(interval=max(1, len(dates) // 12)))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+            plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
 
         current_plot += 1
+
+    # 2. Графики экзогенных переменных (если есть)
+    if exog_vars and exog_data is not None:
+        # Обратное преобразование экзогенных данных
+        exog_data_original = scaler_exog.inverse_transform(exog_data) if scaler_exog else exog_data
+
+        for var in exog_vars:
+            ax = axes[current_plot]
+
+            # Фактические данные
+            ax.plot(dates[:len(exog_data_original)], exog_data_original[:, var],
+                    'g-', lw=2, label='Экзогенные данные')
+
+            # Настройки графика
+            ax.set_title(f"{exog_names.get(var, f'Экзогенная {var + 1}')}")
+            ax.set_xlabel('Дата')
+            ax.grid(True)
+            ax.legend(loc='upper left')
+
+            # Форматирование дат
+            if dates is not None:
+                ax.xaxis.set_major_locator(mdates.MonthLocator(interval=max(1, len(dates) // 12)))
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+
+            current_plot += 1
+
+    plt.tight_layout()
+    plt.show()
 
     # Визуализация экзогенных переменных
     if exog_vars and exog_data is not None:
@@ -869,6 +934,7 @@ def load_data_from_excel(file_path, sheet_name):
             )
 
         # Выделение данных
+        dates = pd.to_datetime(df['Month'], format='%d.%m.%Y').dt.to_period('M')
         mask_endog = ~df[['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].isnull().any(axis=1)
         Y = df.loc[mask_endog, ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].values
 
@@ -880,14 +946,14 @@ def load_data_from_excel(file_path, sheet_name):
 
         print(f"Y.shape={Y.shape}, exog.shape={exog.shape}")
 
-        return Y, exog, scaler_Y, scaler_exog  # Возвращаем и scaler'ы для обратного преобразования
+        return Y, exog, scaler_Y, scaler_exog, dates
 
     except Exception as e:
         print(f"Ошибка при загрузке данных: {str(e)}")
-        return None, None, None, None
+        return None, None, None, None, None
 
 
-def user_interface():
+def user_interface(dates=None):
     """Консольный интерфейс для работы с реальными данными из Excel."""
     # Инициализация переменных
     prior_type = None
@@ -1345,9 +1411,13 @@ def user_interface():
     print(f"Y shape: {Y.shape}, forecasts shape: {forecasts.shape}")
 
     # Визуализация
-    plot_results(Y, forecasts, conf, p, endog_vars=endog_vars, exog_vars=exog_vars,
-                 exog_data=exog if use_exog else None,
-                 scaler_Y=scaler_Y, scaler_exog=scaler_exog)
+    plot_results(Y, forecasts, conf, p,
+                 endog_vars=[0, 1],  # Какие переменные показывать
+                 exog_vars=[0],  # Какие экзогенные переменные показывать
+                 exog_data=exog,
+                 scaler_Y=scaler_Y,
+                 scaler_exog=scaler_exog,
+                 dates=dates)  # Загруженные даты
 
 
 if __name__ == "__main__":
