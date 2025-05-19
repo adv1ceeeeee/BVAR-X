@@ -853,16 +853,15 @@ def user_interface():
             print("1. Использовать последние доступные значения (продолжить текущий тренд)")
             print("2. Ввести вручную будущие значения")
             print("3. Прогнозировать с помощью ARIMA (автоматически для всех переменных)")
-            future_choice = input("Введите номер (1-3): ").strip()
-
-            steps = int(input("\nВведите количество будущих периодов для прогноза: ") or "12")
+            print("4. Оставить существующие значения и перейти далее")
+            future_choice = input("Введите номер (1-4): ").strip()
 
             if future_choice == '1':
-                # Используем последние доступные значения
+                steps = int(input("\nВведите количество будущих периодов для прогноза: ") or "12")
                 exog_future = np.tile(exog[-1, :], (steps, 1))
                 print(f"\nИспользуются последние доступные значения для {steps} будущих периодов.")
             elif future_choice == '2':
-                # Ручной ввод будущих значений
+                steps = int(input("\nВведите количество будущих периодов для прогноза: ") or "12")
                 exog_future = np.zeros((steps, exog.shape[1]))
                 print(f"\nВведите {steps} будущих значений для каждой из {exog.shape[1]} переменных:")
                 for j in range(exog.shape[1]):
@@ -871,13 +870,13 @@ def user_interface():
                         val = float(input(f"Период {i + 1}: "))
                         exog_future[i, j] = val
             elif future_choice == '3':
-                # Прогнозирование с помощью ARIMA
+                steps = int(input("\nВведите количество будущих периодов для прогноза: ") or "12")
                 try:
                     from statsmodels.tsa.arima.model import ARIMA
                     print("\nПрогнозирование будущих значений экзогенных переменных с помощью ARIMA...")
                     exog_future = np.zeros((steps, exog.shape[1]))
                     for j in range(exog.shape[1]):
-                        best_order = (1, 1, 1)  # Можно добавить автоматический подбор порядка
+                        best_order = (1, 1, 1)
                         model = ARIMA(exog[:, j], order=best_order)
                         model_fit = model.fit()
                         forecast = model_fit.forecast(steps=steps)
@@ -885,9 +884,15 @@ def user_interface():
                         print(f"Переменная {j + 1}: ARIMA{best_order} прогноз на {steps} периодов")
                 except ImportError:
                     print("Ошибка: Для использования ARIMA необходимо установить statsmodels.")
-                    print("Используются последние доступные значения.")
                     exog_future = np.tile(exog[-1, :], (steps, 1))
+            elif future_choice == '4':
+                steps = 0
+                exog_future = None
+                print(
+                    "\nБудут использоваться только существующие значения экзогенных переменных. "
+                    "Прогноз не выполняется, анализ только на исторических данных.")
             else:
+                steps = int(input("\nВведите количество будущих периодов для прогноза: ") or "12")
                 print("Неверный выбор. Используются последние доступные значения.")
                 exog_future = np.tile(exog[-1, :], (steps, 1))
         else:
