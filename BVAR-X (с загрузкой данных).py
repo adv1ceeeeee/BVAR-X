@@ -785,25 +785,30 @@ def compute_max_p(T, n, m=0, max_ratio=0.25):
 
 
 def load_data_from_excel(file_path, sheet_name):
-    """Загрузка реальных данных из Excel-файла."""
+    """Загрузка реальных данных из Excel-файла с разделением экзо и эндо данных."""
     try:
-        df = pd.read_excel(file_path, sheet_name=sheet_name).dropna()
+        df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-        # Проверка наличия необходимых столбцов
-        required_columns = ['Month', 'Uninvestedfunds', 'NettoFunds',
-                            'Reinvestedfunds', 'Totalclients',
-                            'Investedfunds', 'Plannedrate']
+        # Преобразуем столбцы к числам (убираем пробелы)
+        for col in ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients', 'Investedfunds', 'Plannedrate']:
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.replace(' ', '', regex=False)
+                .str.replace('\u202f', '', regex=False)
+                .replace('', np.nan)
+                .astype(float)
+            )
 
-        missing_cols = [col for col in required_columns if col not in df.columns]
-        if missing_cols:
-            raise ValueError(f"Отсутствуют необходимые столбцы: {missing_cols}")
+        # Эндогенные — только строки, где все эндогенные НЕ NaN
+        mask_endog = ~df[['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].isnull().any(axis=1)
+        Y = df.loc[mask_endog, ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].values
 
-        # Сортировка по времени
-        df = df.sort_values('Month')
+        # Экзогенные — все строки, где экзогенные НЕ NaN
+        mask_exog = ~df[['Investedfunds', 'Plannedrate']].isnull().any(axis=1)
+        exog = df.loc[mask_exog, ['Investedfunds', 'Plannedrate']].values
 
-        # Разделение на эндогенные и экзогенные переменные
-        Y = df[['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].values
-        exog = df[['Investedfunds', 'Plannedrate']].values
+        print(f"Y.shape={Y.shape}, exog.shape={exog.shape}")
 
         return Y, exog
 
@@ -843,7 +848,7 @@ def user_interface():
         print(f"Количество наблюдений экзогенных переменных: {len(exog)}")
 
         # Определение доступного диапазона будущих значений
-        steps = len(Y) - len(exog)
+        steps = len(exog) - len(Y)
         if steps <= 0:
             print("\nВнимание: Длина экзогенных переменных больше или равна эндогенным.")
             print("Необходимо задать будущие значения экзогенных переменных.")
@@ -896,7 +901,7 @@ def user_interface():
                 print("Неверный выбор. Используются последние доступные значения.")
                 exog_future = np.tile(exog[-1, :], (steps, 1))
         else:
-            print(f"\nДоступно {steps} будущих значений экзогенных переменных.")
+            print(f"\nДоступно {steps} будущих значений эндогенных переменных для прогноза.")
             exog_future = exog[-steps:] if steps > 0 else None
     else:
         exog_future = None
@@ -1267,6 +1272,7 @@ def user_interface():
                   {k: (v if not isinstance(v, np.ndarray) else v[0, 0]) for k, v in prior_kwargs.items()})
 
     print(f"\nДлина прогноза: {steps} периодов")
+    print(f"Y shape: {Y.shape}, forecasts shape: {forecasts.shape}")
 
     # Визуализация
     plot_results(Y, forecasts, conf, p, endog_vars=endog_vars, exog_vars=exog_vars,
