@@ -35,9 +35,8 @@ The main entry point is the `user_interface()` function, which provides a consol
 
 ### Steps to Run
 1. **Prepare Your Data**:
-   - Ensure your Excel file has a sheet (e.g., named "Eviews") with columns: `Month`, `Uninvestedfunds`, `NettoFunds`, `Reinvestedfunds`, `Totalclients`, `Investedfunds`, and `Plannedrate`.
+   - Ensure your Excel file has a sheet with columns for endog/exog time series.
    - The `Month` column should be in `DD.MM.YYYY` format.
-   - Example file path: `"C:/Users/YourPath/Портфель.xlsx"`.
 
 2. **Run the Script**:
    - Update the `file_path` in the `user_interface()` function to point to your Excel file.
