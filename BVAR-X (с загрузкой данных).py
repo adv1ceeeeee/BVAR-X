@@ -397,20 +397,21 @@ def forecast_bvar(Y, post_mean, post_var, p, steps=10, n_samples=1000, exog_futu
 
 
 def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=None,
-                exog_data=None, scaler_Y=None, scaler_exog=None, dates=None):
+                exog_data=None, scaler_Y=None, scaler_exog=None, dates=None,
+                Y_min=None, exog_min=None):
     """Визуализация результатов с разделением на эндогенные и экзогенные переменные."""
     if scaler_Y is None:
         raise ValueError("Не передан scaler_Y для обратного преобразования данных")
 
     # Обратное преобразование данных
-    Y_original = scaler_Y.inverse_transform(Y)
-    forecasts_original = scaler_Y.inverse_transform(forecasts)
+    Y_original = inverse_transform_data(Y, scaler_Y, Y_min)
+    forecasts_original = inverse_transform_data(forecasts, scaler_Y, Y_min)
 
     # Обратное преобразование доверительных интервалов для samples (n_samples, steps, n_endog)
     # Для этого надо "развернуть" массив и обратно "свернуть"
     n_samples, steps, n_endog = conf_intervals['samples'].shape
     samples_reshaped = conf_intervals['samples'].reshape(-1, n_endog)
-    samples_original = scaler_Y.inverse_transform(samples_reshaped)
+    samples_original = inverse_transform_data(samples_reshaped, scaler_Y, Y_min)
     samples_original = samples_original.reshape(n_samples, steps, n_endog)
 
     # Названия переменных
@@ -461,8 +462,8 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
 
     # Стиль и палитра
     colors = ['#FF6B6B', '#FF8E8E', '#FFB5B5', '#FFD8D8']
-    alphas = [0.1, 0.25, 0.5, 1]
-    percentiles = [5, 10, 25, 50]
+    alphas = [0.15, 0.5]
+    percentiles = [5, 10]
     plt.style.use('ggplot')
 
     current_plot = 0
@@ -476,8 +477,8 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
         ax.plot(forecast_dates, forecasts_original[:, var], 'r--', lw=2, label='Прогноз (медиана)')
         # Доверительные интервалы
         for j in range(len(percentiles)):
-            lower = np.percentile(samples_original[:, :, var], percentiles[j], axis=0)
-            upper = np.percentile(samples_original[:, :, var], 100 - percentiles[j], axis=0)
+            lower = np.percentile(samples_original[:, :, var], 2 * percentiles[j], axis=0)
+            upper = np.percentile(samples_original[:, :, var], 100 - 2 * percentiles[j], axis=0)
             ax.fill_between(forecast_dates, lower, upper,
                             color=colors[j], alpha=alphas[j],
                             label=f'{100 - 2 * percentiles[j]}% интервал' if j == 0 else None)
@@ -500,7 +501,7 @@ def plot_results(Y, forecasts, conf_intervals, p, endog_vars=None, exog_vars=Non
     # --- Графики экзогенных переменных ---
     if exog_vars and exog_data is not None:
         # Обратное преобразование экзогенных данных
-        exog_data_original = scaler_exog.inverse_transform(exog_data) if scaler_exog is not None else exog_data
+        exog_data_original = inverse_transform_data(exog_data, scaler_exog, exog_min)
         # Только последние len(exog_data_original) дат
         dates_exog = dates_main[-len(exog_data_original):]
         for var in exog_vars:
@@ -778,29 +779,52 @@ def calculate_bic_aic(Y, p, prior_type, prior_kwargs, criterion='bic', exog=None
 
 # Предобработка данных
 def preprocess_data(Y, exog=None):
-    # Проверка на отрицательные значения
+    # Сохраняем минимальные значения для обратного преобразования
+    Y_min = np.min(Y, axis=0) if np.any(Y < 0) else 0
+
+    # Сдвигаем в положительную область
     if np.any(Y < 0):
-        Y = Y - np.min(Y, axis=0) + 1e-6  # Сдвигаем в положительную область
+        Y = Y - Y_min + 1e-6
 
     # Логарифмирование
-    Y = np.log1p(Y)
-
-    if exog is not None:
-        if np.any(exog < 0):
-            exog = exog - np.min(exog, axis=0) + 1e-6
-        exog = np.log1p(exog)
+    Y_log = np.log1p(Y)
 
     # Стандартизация
     scaler_Y = StandardScaler()
-    Y = scaler_Y.fit_transform(Y)
+    Y_scaled = scaler_Y.fit_transform(Y_log)
 
+    # Аналогично для экзогенных переменных
     if exog is not None:
+        exog_min = np.min(exog, axis=0) if np.any(exog < 0) else 0
+        if np.any(exog < 0):
+            exog = exog - exog_min + 1e-6
+        exog_log = np.log1p(exog)
         scaler_exog = StandardScaler()
-        exog = scaler_exog.fit_transform(exog)
+        exog_scaled = scaler_exog.fit_transform(exog_log)
     else:
+        exog_scaled = None
         scaler_exog = None
+        exog_min = None
 
-    return Y, exog, scaler_Y, scaler_exog
+    return Y_scaled, exog_scaled, scaler_Y, scaler_exog, Y_min, exog_min
+
+
+def inverse_transform_data(Y_scaled, scaler, Y_min):
+    """Полное обратное преобразование данных (стандартизация + логарифмирование + сдвиг)"""
+    if Y_scaled is None or scaler is None:
+        return Y_scaled
+
+    # Обратная стандартизация
+    Y_log = scaler.inverse_transform(Y_scaled)
+
+    # Обратное логарифмирование
+    Y = np.expm1(Y_log)
+
+    # Обратный сдвиг
+    if Y_min is not None:
+        Y = Y + Y_min - 1e-6
+
+    return Y
 
 
 # ------------------------------------------------------------------
@@ -865,7 +889,7 @@ def load_data_from_excel(file_path, sheet_name):
     try:
         df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-        # Преобразование и очистка данных (ваш существующий код)
+        # Преобразование и очистка данных
         for col in ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients', 'Investedfunds', 'Plannedrate']:
             df[col] = (
                 df[col]
@@ -884,16 +908,16 @@ def load_data_from_excel(file_path, sheet_name):
         mask_exog = ~df[['Investedfunds', 'Plannedrate']].isnull().any(axis=1)
         exog = df.loc[mask_exog, ['Investedfunds', 'Plannedrate']].values
 
-        # Нормализация данных
-        Y, exog, scaler_Y, scaler_exog = preprocess_data(Y, exog)
+        # Нормализация данных с сохранением минимальных значений
+        Y, exog, scaler_Y, scaler_exog, Y_min, exog_min = preprocess_data(Y, exog)
 
         print(f"Y.shape={Y.shape}, exog.shape={exog.shape}")
 
-        return Y, exog, scaler_Y, scaler_exog, dates
+        return Y, exog, scaler_Y, scaler_exog, dates, Y_min, exog_min
 
     except Exception as e:
         print(f"Ошибка при загрузке данных: {str(e)}")
-        return None, None, None, None, None
+        return None, None, None, None, None, None, None
 
 
 def user_interface(dates=None):
@@ -912,7 +936,7 @@ def user_interface(dates=None):
     sheet_name = "Eviews"
 
     print("\nЗагрузка данных из Excel...")
-    Y, exog, scaler_Y, scaler_exog, dates = load_data_from_excel(file_path, sheet_name)
+    Y, exog, scaler_Y, scaler_exog, dates, Y_min, exog_min = load_data_from_excel(file_path, sheet_name)
 
     if Y is None:
         raise ValueError("Не удалось загрузить данные из Excel. Проверьте файл и структуру данных.")
@@ -1312,7 +1336,7 @@ def user_interface(dates=None):
 
         post_mean, post_var = bvar_estimate(Y, p, prior_type, exog=exog, **prior_kwargs)
         forecasts, conf = forecast_bvar(Y, post_mean, post_var, p, steps=steps,
-                                        exog_future=exog_future if use_exog else None)
+                                        exog_future=exog_future if use_exog else None, scaler_Y=scaler_Y)
 
     # Выбор переменных для визуализации
     print("\nВыберите переменные для визуализации:")
@@ -1355,12 +1379,14 @@ def user_interface(dates=None):
 
     # Визуализация
     plot_results(Y, forecasts, conf, p,
-                 endog_vars=endog_vars,  # Какие эндогенные переменные показывать
-                 exog_vars=exog_vars,  # Какие экзогенные переменные показывать
+                 endog_vars=endog_vars,
+                 exog_vars=exog_vars,
                  exog_data=exog,
                  scaler_Y=scaler_Y,
                  scaler_exog=scaler_exog,
-                 dates=dates)  # Загруженные даты
+                 dates=dates,
+                 Y_min=Y_min,
+                 exog_min=exog_min)
 
 
 if __name__ == "__main__":
