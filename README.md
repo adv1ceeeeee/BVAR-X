@@ -88,11 +88,11 @@ The script will:
 - `user_interface`: Provides an interactive console interface.
 
 ## Data Format
-The Excel file should contain:
+The Excel file should contain (table data as time series):
 - **Columns**:
   - `Month`: Date in `DD.MM.YYYY` format.
-  - `Uninvestedfunds`, `NettoFunds`, `Reinvestedfunds`, `Totalclients`: Endogenous variables.
-  - `Investedfunds`, `Plannedrate`: Exogenous variables.
+  - Endogenous variables.
+  - Exogenous variables.
 - **Rows**: Time series observations, with no missing values for the selected variables.
 
 ## Notes
