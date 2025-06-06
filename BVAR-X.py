@@ -889,8 +889,8 @@ def load_data_from_excel(file_path, sheet_name):
     try:
         df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-        # Преобразование и очистка данных
-        for col in ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients', 'Investedfunds', 'Plannedrate']:
+        # Преобразование и очистка данных (вместо ... перечислить эндогенные/экзогенные ряды)
+        for col in [...]:
             df[col] = (
                 df[col]
                 .astype(str)
@@ -902,11 +902,11 @@ def load_data_from_excel(file_path, sheet_name):
 
         # Выделение данных
         dates = pd.to_datetime(df['Month'], format='%d.%m.%Y').dt.to_period('M')
-        mask_endog = ~df[['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].isnull().any(axis=1)
-        Y = df.loc[mask_endog, ['Uninvestedfunds', 'NettoFunds', 'Reinvestedfunds', 'Totalclients']].values
+        mask_endog = ~df[[...]].isnull().any(axis=1)
+        Y = df.loc[mask_endog, [...]].values
 
-        mask_exog = ~df[['Investedfunds', 'Plannedrate']].isnull().any(axis=1)
-        exog = df.loc[mask_exog, ['Investedfunds', 'Plannedrate']].values
+        mask_exog = ~df[[...]].isnull().any(axis=1)
+        exog = df.loc[mask_exog, [...]].values
 
         # Нормализация данных с сохранением минимальных значений
         Y, exog, scaler_Y, scaler_exog, Y_min, exog_min = preprocess_data(Y, exog)
@@ -921,7 +921,7 @@ def load_data_from_excel(file_path, sheet_name):
 
 
 def user_interface(dates=None):
-    """Консольный интерфейс для работы с реальными данными из Excel."""
+    """Консольный интерфейс"""
     # Инициализация переменных
     prior_type = None
     prior_kwargs = {}
@@ -932,8 +932,8 @@ def user_interface(dates=None):
     steps = 0  # Длина прогноза будет определена автоматически
 
     # Автоматическая загрузка данных из Excel
-    file_path = "C:/Users/lihop/Личные данные/Работа/Робофинанс/Темы исследований/2025/P2P-платформа/Прогноз RBC на май/Портфель.xlsx"
-    sheet_name = "Eviews"
+    file_path = "..."
+    sheet_name = "..."
 
     print("\nЗагрузка данных из Excel...")
     Y, exog, scaler_Y, scaler_exog, dates, Y_min, exog_min = load_data_from_excel(file_path, sheet_name)
@@ -942,12 +942,10 @@ def user_interface(dates=None):
         raise ValueError("Не удалось загрузить данные из Excel. Проверьте файл и структуру данных.")
 
     print("\nДанные успешно загружены и нормализованы:")
-    print(f"Эндогенные переменные: Uninvestedfunds, NettoFunds, Reinvestedfunds, Totalclients")
     print(f"Количество наблюдений: {len(Y)}")
 
     use_exog = exog is not None
     if use_exog:
-        print(f"\nЭкзогенные переменные: Investedfunds, Plannedrate")
         print(f"Количество наблюдений экзогенных переменных: {len(exog)}")
 
         # Определение доступного диапазона будущих значений
